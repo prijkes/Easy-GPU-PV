@@ -4346,7 +4346,7 @@ Function New-GPUEnabledVM {
     $VHDPath = ConcatenateVHDPath -VHDPath $VHDPath -VMName $VMName
     $DriveLetter = Mount-ISOReliable -SourcePath $SourcePath
 
-    if ($(Get-VM -Name $VMName -ErrorAction SilentlyContinue) -ne $NULL) {
+    if ($NULL -ne $(Get-VM -Name $VMName -ErrorAction SilentlyContinue)) {
         SmartExit -ExitReason "Virtual Machine already exists with name $VMName, please delete existing VM or change VMName"
     }
     if (Test-Path $vhdPath) {
@@ -4360,7 +4360,37 @@ Function New-GPUEnabledVM {
         New-VM -Name $VMName -MemoryStartupBytes $MemoryAmount -VHDPath $VhdPath -Generation 2 -SwitchName $NetworkSwitch -Version $MaxAvailableVersion | Out-Null
         Set-VM -Name $VMName -ProcessorCount $CPUCores -CheckpointType Disabled -LowMemoryMappedIoSpace 3GB -HighMemoryMappedIoSpace 32GB -GuestControlledCacheTypes $true -AutomaticStopAction ShutDown
         Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $false 
-        $CPUManufacturer = Get-CimInstance -ClassName Win32_Processor | Foreach-Object Manufacturer
+
+        # Robust CPU manufacturer detection: try CIM, then fall back to WMI, retry a few times for transient errors.
+        Function Get-CPUManufacturer {
+            param(
+                [int]$Retries = 3,
+                [int]$DelaySeconds = 1
+            )
+
+            for ($i = 0; $i -lt $Retries; $i++) {
+                try {
+                    $cpu = Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop
+                    if ($cpu) { return ($cpu | ForEach-Object Manufacturer) }
+                }
+                catch {
+                    # Try WMI fallback for older hosts or transient CIM issues
+                    try {
+                        $cpu = Get-WmiObject -Class Win32_Processor -ErrorAction Stop
+                        if ($cpu) { return ($cpu | ForEach-Object Manufacturer) }
+                    }
+                    catch {
+                        Write-W2VWarn "Attempt $($i + 1) to query CPU manufacturer failed: $($_.Exception.Message)"
+                    }
+                }
+                Start-Sleep -Seconds $DelaySeconds
+            }
+
+            Write-W2VWarn "Unable to determine CPU manufacturer via CIM/WMI after $Retries attempts. Defaulting to 'Unknown'."
+            return 'Unknown'
+        }
+
+        $CPUManufacturer = Get-CPUManufacturer -Retries 5 -DelaySeconds 1
         $BuildVer = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
         if (($BuildVer.CurrentBuild -lt 22000) -and ($CPUManufacturer -eq "AuthenticAMD")) {
         }
@@ -4371,8 +4401,6 @@ Function New-GPUEnabledVM {
         Enable-VMTPM -VMName $VMName 
         Add-VMDvdDrive -VMName $VMName -Path $params.SourcePath
         Assign-VMGPUPartitionAdapter -GPUName $GPUName -VMName $VMName -GPUResourceAllocationPercentage $GPUResourceAllocationPercentage
-        Write-Host "INFO   : Starting and connecting to VM"
-        vmconnect localhost $VMName
     }
     else {
         SmartExit -ExitReason "Failed to create VHDX, stopping script"
@@ -4383,6 +4411,7 @@ Check-Params @params
 
 New-GPUEnabledVM @params
 
+Write-Host "INFO   : Starting VM"
 Start-VM -Name $params.VMName
 
 SmartExit -ExitReason "If all went well the Virtual Machine will have started, 
