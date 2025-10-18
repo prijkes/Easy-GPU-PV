@@ -64,10 +64,8 @@
                     New-Item -ItemType Directory -Path $Destination -Force | Out-Null
                 }
                 Copy-Item $path2 -Destination $Destination -Force
-                
-            }
+                            }
 
         }
     }
-
 }

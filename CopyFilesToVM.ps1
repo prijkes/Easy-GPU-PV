@@ -60,10 +60,6 @@
     Optional product key or other key parameter that may be injected into setup if used by
     your unattend configuration.
 
-.PARAMETER Username
-    Local administrator username that will be created inside the VM via unattend.
-    Must be alphanumeric (no special characters). Default: 'GPUVM'.
-
 .PARAMETER Credential
     [PSCredential] object containing the username and password to use when creating the
     local account and enabling autologon. This parameter is Mandatory. Use Get-Credential
@@ -100,7 +96,6 @@ param(
     [float]$GPUResourceAllocationPercentage = 50,
     [string]$Team_ID = "",
     [string]$Key = "",
-    [string]$Username = "GPUVM",
     [Parameter(Mandatory = $true)]
     [System.Management.Automation.PSCredential]$Credential,
     [string]$Autologon = "true"
@@ -123,12 +118,22 @@ $params = @{
     GPUResourceAllocationPercentage = $GPUResourceAllocationPercentage
     Team_ID                         = $Team_ID
     Key                             = $Key
-    Username                        = $Username
     Autologon                       = $Autologon
 }
 
 # Store PSCredential into params for secure downstream usage
 $params.Credential = $Credential
+# Derive the username from the PSCredential to avoid a separate Username parameter
+if ($Credential -ne $null) {
+    $ResolvedUsername = $Credential.UserName
+} else {
+    # Fallback: if credential is somehow null, default to VMName + 'User'
+    $ResolvedUsername = "$($VMName)User"
+}
+
+# Keep compatibility with existing code that references $params.Username or $Username
+$params.Username = $ResolvedUsername
+$Username = $ResolvedUsername
 
 Import-Module $PSScriptRoot\Add-VMGpuPartitionAdapterFiles.psm1
 
@@ -4271,6 +4276,13 @@ Function Modify-AutoUnattend {
         ($xml.unattend.settings.component | where-object { $_.UserAccounts }).UserAccounts.LocalAccounts.localaccount.Password.Value = $plainPassword
     }
 
+    # Resolve username: prefer explicit parameter, then credential, then global $Username
+    if ([string]::IsNullOrEmpty($username)) {
+        if ($Credential -ne $null) { $username = $Credential.UserName }
+        elseif (Get-Variable -Name 'Username' -Scope Script -ErrorAction SilentlyContinue) { $username = $Script:Username }
+        elseif (Get-Variable -Name 'Username' -ErrorAction SilentlyContinue) { $username = $Username }
+    }
+
     ($xml.unattend.settings.component | where-object { $_.autologon }).autologon.username = $username
     ($xml.unattend.settings.component | where-object { $_.autologon }).autologon.enabled = $autologon
     ($xml.unattend.settings.component | where-object { $_.UserAccounts }).UserAccounts.LocalAccounts.localaccount.Group = "Administrators"
@@ -4337,6 +4349,12 @@ Function New-GPUEnabledVM {
     if (Test-Path $vhdPath) {
         SmartExit -ExitReason "Virtual Machine Disk already exists at $vhdPath, please delete existing VHDX or change VMName"
     }
+    # Resolve username for use in unattend: prefer explicit parameter, then credential, then $Username
+    if ([string]::IsNullOrEmpty($username)) {
+        if ($Credential -ne $null) { $username = $Credential.UserName }
+        elseif ($null -ne $Username) { $username = $Username }
+    }
+
     # Pass the PSCredential through to Modify-AutoUnattend; function will unsecure it in-memory only when needed
     Modify-AutoUnattend -username "$username" -Credential $Credential -autologon $autologon -hostname $VMName -UnattendPath $UnattendPath
     $MaxAvailableVersion = (Get-VMHostSupportedVersion).Version | Where-Object { $_.Major -lt 254 } | Select-Object -Last 1 
