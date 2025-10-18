@@ -101,7 +101,7 @@ param(
     [string]$Autologon = "true"
 )
 
-# Build internal params hashtable (so existing code that references $params keeps working)
+# Build internal params hashtable
 $params = @{
     VMName                          = $VMName
     SourcePath                      = $SourcePath
@@ -123,13 +123,12 @@ $params = @{
 
 # Store PSCredential into params for secure downstream usage
 $params.Credential = $Credential
-# Derive the username from the PSCredential to avoid a separate Username parameter
-if ($Credential -ne $null) {
-    $ResolvedUsername = $Credential.UserName
-} else {
-    # Fallback: if credential is somehow null, default to VMName + 'User'
-    $ResolvedUsername = "$($VMName)User"
+# Validate Credential is present; throw a terminating error if not
+if ($null -eq $Credential) {
+    throw "Parameter -Credential is required and cannot be null. Provide a PSCredential (e.g. via Get-Credential)."
 }
+# Derive the username from the PSCredential to avoid a separate Username parameter
+$ResolvedUsername = $Credential.UserName
 
 # Keep compatibility with existing code that references $params.Username or $Username
 $params.Username = $ResolvedUsername
@@ -192,14 +191,6 @@ Function ConcatenateVHDPath {
     }
 }
 
-Function SmartExit {
-    param (
-        [string]$ExitReason
-    )
-    Write-Host $ExitReason
-    Exit
-}
-
 Function Check-Params {
 
     $ExitReason = @()
@@ -240,7 +231,7 @@ Function Check-Params {
         ForEach ($IndividualReason in $ExitReason) {
             Write-Host "ERROR: $IndividualReason" -ForegroundColor RED
         }
-        SmartExit
+        throw "Invalid params"
     }
 }
 
@@ -4344,10 +4335,10 @@ Function New-GPUEnabledVM {
     $DriveLetter = Mount-ISOReliable -SourcePath $SourcePath
 
     if ($NULL -ne $(Get-VM -Name $VMName -ErrorAction SilentlyContinue)) {
-        SmartExit -ExitReason "Virtual Machine already exists with name $VMName, please delete existing VM or change VMName"
+        throw "Virtual Machine already exists with name $VMName, please delete existing VM or change VMName"
     }
     if (Test-Path $vhdPath) {
-        SmartExit -ExitReason "Virtual Machine Disk already exists at $vhdPath, please delete existing VHDX or change VMName"
+        throw "Virtual Machine Disk already exists at $vhdPath, please delete existing VHDX or change VMName"
     }
     # Resolve username for use in unattend: prefer explicit parameter, then credential, then $Username
     if ([string]::IsNullOrEmpty($username)) {
@@ -4406,7 +4397,7 @@ Function New-GPUEnabledVM {
         Assign-VMGPUPartitionAdapter -GPUName $GPUName -VMName $VMName -GPUResourceAllocationPercentage $GPUResourceAllocationPercentage
     }
     else {
-        SmartExit -ExitReason "Failed to create VHDX, stopping script"
+        throw "Failed to create VHDX, stopping script"
     }
 }
 
