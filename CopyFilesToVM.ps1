@@ -130,7 +130,7 @@ $params = @{
 # Store PSCredential into params for secure downstream usage
 $params.Credential = $Credential
 
-Import-Module $PSSCriptRoot\Add-VMGpuPartitionAdapterFiles.psm1
+Import-Module $PSScriptRoot\Add-VMGpuPartitionAdapterFiles.psm1
 
 function Is-Administrator {  
     $CurrentUser = [Security.Principal.WindowsIdentity]::GetCurrent();
@@ -169,7 +169,7 @@ Function Mount-ISOReliable {
         Start-Sleep -s 1 
         $delay++
     }
-    Until (($mountResult | Get-Volume).DriveLetter -ne $NULL)
+    Until ($NULL -ne ($mountResult | Get-Volume).DriveLetter)
     ($mountResult | Get-Volume).DriveLetter
 }
 
@@ -189,24 +189,10 @@ Function ConcatenateVHDPath {
 
 Function SmartExit {
     param (
-        [switch]$NoHalt,
         [string]$ExitReason
     )
-    if (($host.name -eq 'Windows PowerShell ISE Host') -or ($host.Name -eq 'Visual Studio Code Host')) {
-        Write-Host $ExitReason
-        Exit
-    }
-    else {
-        if ($NoHalt) {
-            Write-Host $ExitReason
-            Exit
-        }
-        else {
-            Write-Host $ExitReason
-            Read-host -Prompt "Press any key to Exit..."
-            Exit
-        }
-    }
+    Write-Host $ExitReason
+    Exit
 }
 
 Function Check-Params {
@@ -276,10 +262,10 @@ Function Setup-Install {
     if ((Test-Path -Path $DriveLetter\Windows\system32\GroupPolicy\User\Scripts\Logon) -eq $true) {} Else { New-Item -Path $DriveLetter\Windows\system32\GroupPolicy\User\Scripts\Logon -ItemType directory | Out-Null }
     if ((Test-Path -Path $DriveLetter\Windows\system32\GroupPolicy\User\Scripts\Logoff) -eq $true) {} Else { New-Item -Path $DriveLetter\Windows\system32\GroupPolicy\User\Scripts\Logoff -ItemType directory | Out-Null }
     if ((Test-Path -Path $DriveLetter\ProgramData\Easy-GPU-P) -eq $true) {} Else { New-Item -Path $DriveLetter\ProgramData\Easy-GPU-P -ItemType directory | Out-Null }
-    Copy-Item -Path $psscriptroot\VMScripts\VBCableInstall.ps1 -Destination $DriveLetter\ProgramData\Easy-GPU-P
-    Copy-Item -Path $psscriptroot\gpt.ini -Destination $DriveLetter\Windows\system32\GroupPolicy
-    Copy-Item -Path $psscriptroot\User\psscripts.ini -Destination $DriveLetter\Windows\system32\GroupPolicy\User\Scripts
-    Copy-Item -Path $psscriptroot\User\Install.ps1 -Destination $DriveLetter\Windows\system32\GroupPolicy\User\Scripts\Logon
+    Copy-Item -Path $PSScriptRoot\VMScripts\VBCableInstall.ps1 -Destination $DriveLetter\ProgramData\Easy-GPU-P
+    Copy-Item -Path $PSScriptRoot\gpt.ini -Destination $DriveLetter\Windows\system32\GroupPolicy
+    Copy-Item -Path $PSScriptRoot\User\psscripts.ini -Destination $DriveLetter\Windows\system32\GroupPolicy\User\Scripts
+    Copy-Item -Path $PSScriptRoot\User\Install.ps1 -Destination $DriveLetter\Windows\system32\GroupPolicy\User\Scripts\Logon
 }
 
 function Convert-WindowsImage {
@@ -879,8 +865,7 @@ function Convert-WindowsImage {
         ##########################################################################################
         #                             Constants and Pseudo-Constants
         ##########################################################################################
-        $PARTITION_STYLE_MBR = 0x00000000                                   # The default value
-        $PARTITION_STYLE_GPT = 0x00000001                                   # Just in case...
+        # Partition style constants (not currently referenced directly)
 
         # Version information that can be populated by timebuild.
         $ScriptVersion = DATA {
@@ -900,7 +885,6 @@ function Convert-WindowsImage {
         $sessionKey = [Guid]::NewGuid().ToString()                 # Session key, used for keeping records unique between multiple runs.
         $logFolder = "$($TempDirectory)\$($scriptName)\$($sessionKey)" # Log folder path.
         $vhdMaxSize = 2040GB                                       # Maximum size for VHD is ~2040GB.
-        $vhdxMaxSize = 64TB                                         # Maximum size for VHDX is ~64TB.
         $lowestSupportedVersion = New-Object Version "6.1"                     # The lowest supported *image* version; making sure we don't run against Vista/2k8.
         $lowestSupportedBuild = 9200                                         # The lowest supported *host* build.  Set to Win8 CP.
         $transcripting = $false
@@ -2027,7 +2011,7 @@ You can use the fields below to configure the VHD or VHDX that you want to creat
             # Check to see if the WIM is local, or on a network location.  If the latter, copy it locally.
             if (Test-IsNetworkLocation $SourcePath) {
                 Write-W2VInfo "Copying WIM $(Split-Path $SourcePath -Leaf) to temp folder..."
-                $copied = robocopy (Split-Path $SourcePath -Parent) $TempDirectory (Split-Path $SourcePath -Leaf) | Out-Null
+                robocopy (Split-Path $SourcePath -Parent) $TempDirectory (Split-Path $SourcePath -Leaf) | Out-Null
                 $tempSource = Join-Path $TempDirectory (Split-Path $SourcePath -Leaf)
                 Copy-Item -Path $SourcePath -Destination $tempSource -Force
                 # Keep original $params.SourcePath intact; record local copied source
@@ -2188,7 +2172,7 @@ You can use the fields below to configure the VHD or VHDX that you want to creat
                     # Create the reserved partition
                     #
                     Write-W2VInfo "Creating MSR partition..."
-                    $reservedPartition = New-Partition -DiskNumber $disk.Number -Size 128MB -GptType '{e3c9e316-0b5c-4db8-817d-f92df00215ae}'
+                    New-Partition -DiskNumber $disk.Number -Size 128MB -GptType '{e3c9e316-0b5c-4db8-817d-f92df00215ae}' | Out-Null
 
                     #
                     # Create the Windows partition
@@ -2308,7 +2292,8 @@ You can use the fields below to configure the VHD or VHDX that you want to creat
 
             if (($openImage.ImageArchitecture -ne "ARM") -and # No virtualization platform for ARM images
                 ($openImage.ImageArchitecture -ne "ARM64") -and # No virtualization platform for ARM64 images
-                ($BCDinVHD -ne "NativeBoot")) { # User asked for a non-bootable image
+                ($BCDinVHD -ne "NativeBoot")) {
+                # User asked for a non-bootable image
                 if (Test-Path "$($systemDrive)\boot\bcd") {
                     Write-W2VInfo "Image already has BIOS BCD store..."
                 }
@@ -4411,10 +4396,8 @@ Check-Params @params
 
 New-GPUEnabledVM @params
 
+Enable-VMIntegrationService -VMName $params.VMName -Name "Guest Service Interface"
+Write-Host "INFO   : Enabled Guest Service Interface"
+
 Write-Host "INFO   : Starting VM"
 Start-VM -Name $params.VMName
-
-SmartExit -ExitReason "If all went well the Virtual Machine will have started, 
-In a few minutes it will load the Windows desktop, 
-when it does, install your favorite high performance remote desktop! " 
-
